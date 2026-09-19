@@ -6,11 +6,8 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = CraneAdv
 CraneAdv_FILES = Tweak.x TweakApp.x
-CraneAdv_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
+CraneAdv_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -Wno-unused-variable
 CraneAdv_FRAMEWORKS = UIKit Foundation
 CraneAdv_LIBRARIES = substrate
 
 include $(THEOS_MAKE_PATH)/tweak.mk
-
-SUBPROJECTS += craneadvprefs
-include $(THEOS_MAKE_PATH)/aggregate.mk
