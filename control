@@ -1,0 +1,9 @@
+Package: com.developer.craneadvanced
+Name: Crane Advanced
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: 应用分身/容器管理插件
+Maintainer: Developer
+Author: Developer
+Section: Tweaks
+Depends: mobilesubstrate
