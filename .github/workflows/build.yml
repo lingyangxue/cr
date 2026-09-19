@@ -34,35 +34,47 @@ jobs:
           echo "THEOS=$THEOS" >> $GITHUB_ENV
           echo "$THEOS/bin" >> $GITHUB_PATH
 
-      - name: Symlink system clang as Theos toolchain
+      - name: Install ld64.lld and override system ld
         run: |
           export THEOS=${{ github.workspace }}/theos
+
+          echo "=== 搜索 ld64.lld ==="
+          LD64=$(find /usr -name "ld64.lld" -type f 2>/dev/null | head -1)
+          if [ -z "$LD64" ]; then
+            echo "未找到，安装 lld-18..."
+            sudo apt-get install -y lld-18 || true
+            LD64=$(find /usr -name "ld64.lld" -type f 2>/dev/null | head -1)
+          fi
+          if [ -z "$LD64" ]; then
+            echo "安装 lld 包..."
+            sudo apt-get install -y lld || true
+            LD64=$(find /usr -name "ld64.lld" -type f 2>/dev/null | head -1)
+          fi
+          if [ -z "$LD64" ]; then
+            echo "致命错误：无法找到 ld64.lld"
+            echo "已安装的 ld 相关文件："
+            ls /usr/bin/ | grep -i ld
+            exit 1
+          fi
+          echo "找到 ld64.lld: $LD64"
+          $LD64 --version
+
           TC=$THEOS/toolchain/linux/iphone
           mkdir -p $TC/bin
 
-          # 1. clang 编译器
           ln -sf $(which clang)   $TC/bin/clang
           ln -sf $(which clang++) $TC/bin/clang++
           ln -sf $(which clang)   $TC/bin/cc
           ln -sf $(which clang++) $TC/bin/c++
 
-          # 2. 关键：ld 必须指向 ld64.lld（Apple Mach-O 兼容），不能是 ld.lld
-          echo "=== 查找 ld64.lld ==="
-          LD64=$(which ld64.lld 2>/dev/null || find /usr -name "ld64.lld*" 2>/dev/null | head -1)
-          if [ -z "$LD64" ]; then
-            echo "未找到 ld64.lld，尝试 apt 安装 lld-18..."
-            sudo apt-get install -y lld-18 || true
-            LD64=$(find /usr -name "ld64.lld*" 2>/dev/null | head -1)
-          fi
-          echo "使用 ld64.lld: $LD64"
-          if [ -z "$LD64" ]; then
-            echo "致命错误：未找到 ld64.lld"
-            exit 1
-          fi
           ln -sf $LD64 $TC/bin/ld
           ln -sf $LD64 $TC/bin/ld64
 
-          # 3. LLVM 工具
+          echo "=== 覆盖 /usr/bin/ld ==="
+          sudo rm -f /usr/bin/ld
+          sudo ln -sf $LD64 /usr/bin/ld
+          ls -la /usr/bin/ld
+
           for bin in ar ranlib nm strip size objcopy objdump; do
             if command -v llvm-$bin >/dev/null 2>&1; then
               ln -sf $(which llvm-$bin) $TC/bin/$bin
@@ -71,14 +83,12 @@ jobs:
             fi
           done
 
-          echo "=== 工具链目录内容 ==="
+          echo "=== 工具链内容 ==="
           ls -la $TC/bin/
 
-          echo "=== 测试 clang ==="
+          echo "=== 验证 ==="
           $TC/bin/clang --version
-
-          echo "=== 测试 ld64.lld ==="
-          $TC/bin/ld --version || true
+          /usr/bin/ld --version || true
 
       - name: Build Tweak
         run: |
