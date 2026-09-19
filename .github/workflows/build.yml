@@ -7,10 +7,6 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
-# 关键：显式声明读权限，让 GITHUB_TOKEN 能用于 API 请求
-permissions:
-  contents: read
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -23,7 +19,11 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git make fakeroot perl clang lld libssl-dev curl xz-utils jq
+          sudo apt-get install -y \
+            git make fakeroot perl \
+            clang lld llvm \
+            libssl-dev curl xz-utils dpkg \
+            libplist-utils libxml2-utils
 
       - name: Setup Theos
         run: |
@@ -34,89 +34,36 @@ jobs:
           echo "THEOS=$THEOS" >> $GITHUB_ENV
           echo "$THEOS/bin" >> $GITHUB_PATH
 
-      - name: Download Linux Toolchain
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Symlink system clang as Theos toolchain
         run: |
           export THEOS=${{ github.workspace }}/theos
-          mkdir -p $THEOS/toolchain/linux
+          TC=$THEOS/toolchain/linux/iphone
+          mkdir -p $TC/bin
 
-          echo "=== 使用认证 API 查询 Linux 工具链 ==="
-          # 带 token 的请求，速率限制从 60/小时 提升到 5000/小时
-          curl -s -H "Authorization: Bearer $GH_TOKEN" \
-               -H "Accept: application/vnd.github+json" \
-               "https://api.github.com/repos/theos/toolchain/releases?per_page=100" \
-               -o /tmp/releases.json
+          # 系统 clang 作为编译器
+          ln -sf $(which clang)   $TC/bin/clang
+          ln -sf $(which clang++) $TC/bin/clang++
+          ln -sf $(which clang)   $TC/bin/cc
+          ln -sf $(which clang++) $TC/bin/c++
 
-          # 检查 API 返回内容
-          if ! jq -e 'type == "array"' /tmp/releases.json > /dev/null 2>&1; then
-            echo "=== API 返回异常，原始内容如下 ==="
-            cat /tmp/releases.json
-            exit 1
-          fi
+          # LLVM lld 作为链接器（关键：iOS 需要 Mach-O 格式的链接器）
+          ln -sf $(which ld.lld)   $TC/bin/ld    2>/dev/null || true
+          ln -sf $(which ld64.lld) $TC/bin/ld64  2>/dev/null || true
+          ln -sf $(which lld)      $TC/bin/lld   2>/dev/null || true
 
-          echo "=== 查找 Linux 工具链 asset ==="
-          TOOLCHAIN_URL=$(jq -r '
-            [.[] | .assets[]?
-              | select(.name | test("linux"; "i"))
-              | select(.name | test("\\.(tar\\.xz|tar\\.gz|txz)$"; "i"))
-              | .browser_download_url
-            ] | first // empty
-          ' /tmp/releases.json)
-
-          if [ -z "$TOOLCHAIN_URL" ]; then
-            echo "未找到 Linux 工具链 asset，列出所有 release 与 asset："
-            jq -r '.[] | "Release: \(.tag_name)  Assets: \([.assets[].name] | join(", "))"' /tmp/releases.json
-            exit 1
-          fi
-
-          echo "=== 下载: $TOOLCHAIN_URL ==="
-          cd /tmp
-          curl -L -H "Authorization: Bearer $GH_TOKEN" "$TOOLCHAIN_URL" -o toolchain.archive
-          file toolchain.archive
-          ls -la toolchain.archive
-
-          echo "=== 解压到 $THEOS/toolchain/linux ==="
-          cd $THEOS/toolchain/linux
-          if file /tmp/toolchain.archive | grep -qi 'XZ'; then
-            tar -xJf /tmp/toolchain.archive
-          elif file /tmp/toolchain.archive | grep -qi 'LZMA'; then
-            tar --lzma -xf /tmp/toolchain.archive
-          elif file /tmp/toolchain.archive | grep -qi 'gzip'; then
-            tar -xzf /tmp/toolchain.archive
-          else
-            tar -xf /tmp/toolchain.archive
-          fi
-
-          echo "=== 解压后目录结构 ==="
-          find . -maxdepth 3 -type d | head -30
-          echo "=== 查找 clang ==="
-          find . -name clang -type f 2>/dev/null | head -5
-
-      - name: Fix Toolchain Path
-        run: |
-          export THEOS=${{ github.workspace }}/theos
-          if [ ! -f "$THEOS/toolchain/linux/iphone/bin/clang" ]; then
-            echo "=== 期望路径不存在，开始自动修正 ==="
-            CLANG_PATH=$(find $THEOS/toolchain/linux -name clang -type f 2>/dev/null | head -1)
-            if [ -n "$CLANG_PATH" ]; then
-              echo "找到 clang: $CLANG_PATH"
-              BIN_DIR=$(dirname "$CLANG_PATH")
-              IPHONE_DIR=$(dirname "$BIN_DIR")
-              echo "实际 iPhone 目录: $IPHONE_DIR"
-              if [ "$IPHONE_DIR" != "$THEOS/toolchain/linux/iphone" ]; then
-                mkdir -p $THEOS/toolchain/linux/iphone
-                cp -R "$IPHONE_DIR"/* $THEOS/toolchain/linux/iphone/ || true
-              fi
-              ls -la $THEOS/toolchain/linux/iphone/bin/ | head -10
-            else
-              echo "警告：完全未找到 clang，工具链可能不是标准结构"
-              find $THEOS/toolchain/linux -maxdepth 4 -type f | head -30
+          # 常用 binutils
+          for bin in ar ranlib nm strip size objcopy objdump; do
+            if command -v llvm-$bin >/dev/null 2>&1; then
+              ln -sf $(which llvm-$bin) $TC/bin/$bin
+            elif command -v $bin >/dev/null 2>&1; then
+              ln -sf $(which $bin) $TC/bin/$bin
             fi
-          else
-            echo "工具链路径正确"
-            ls -la $THEOS/toolchain/linux/iphone/bin/ | head -5
-          fi
+          done
+
+          echo "=== 工具链目录内容 ==="
+          ls -la $TC/bin/
+          echo "=== 测试 clang 版本 ==="
+          $TC/bin/clang --version
 
       - name: Build Tweak
         run: |
