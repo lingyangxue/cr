@@ -1,8 +1,10 @@
 #pragma once
 #import <Foundation/Foundation.h>
+#import <objc/message.h>        // ★ 修复 objc_msgSend 未声明
+#import <objc/runtime.h>
 #import <sys/stat.h>
 #import <notify.h>
-#import <objc/runtime.h>
+#import <string.h>
 
 #define PREF_DOMAIN CFSTR("com.developer.craneadvanced")
 #define PREF_PATH @"/var/mobile/Library/Preferences/com.developer.craneadvanced.plist"
