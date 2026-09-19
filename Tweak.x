@@ -5,7 +5,7 @@
 #import <objc/message.h>
 #import <unistd.h>
 
-#pragma mark - 写日志到文件（用户可用 Filza 直接查看）
+#pragma mark - 写日志到文件
 
 static void CraneLog(NSString *format, ...) {
     va_list args;
@@ -32,14 +32,16 @@ static void CraneLog(NSString *format, ...) {
     NSLog(@"[CraneAdv] %@", msg);
 }
 
-#pragma mark - 工具
+#pragma mark - 工具函数
 
 static void KillProc(NSString *bid) {
     if (!bid) return;
     Class cls = objc_getClass("FBProcessManager");
     if (!cls) return;
     id pm = ((id (*)(id, SEL))objc_msgSend)(cls, sel_registerName("sharedInstance"));
-    NSArray *ps = ((id (*)(id, SEL, id))objc_msgSend)(pm, sel_registerName("processesForBundleIdentifier:"), bid);
+    NSArray *ps = ((id (*)(id, SEL, id))objc_msgSend)(pm,
+                                                      sel_registerName("processesForBundleIdentifier:"),
+                                                      bid);
     for (id p in ps) {
         SEL s = sel_registerName("killForReason:andReport:withDescription:completion:");
         if ([p respondsToSelector:s]) {
@@ -48,11 +50,17 @@ static void KillProc(NSString *bid) {
     }
 }
 
+static NSString *GetStr(id obj, NSString *selName) {
+    if (!obj) return nil;
+    SEL sel = NSSelectorFromString(selName);
+    if (![obj respondsToSelector:sel]) return nil;
+    return ((id (*)(id, SEL))objc_msgSend)(obj, sel);
+}
+
 static BOOL AlreadyHasCraneItem(NSArray *items) {
     if (!items) return NO;
     for (id item in items) {
-        NSString *type = nil;
-        @try { type = ((id (*)(id, SEL))objc_msgSend)(item, sel_registerName("type")); } @catch (NSException *e) {}
+        NSString *type = GetStr(item, @"type");
         if (type && [type hasPrefix:@"com.crane.switch."]) return YES;
     }
     return NO;
@@ -89,26 +97,31 @@ static NSArray *BuildItems(NSString *bid, NSArray *orig) {
     return items;
 }
 
-#pragma mark - Hook 1: SBHIconManager
+#pragma mark - Hook 1: SBHIconManager（主要入口）
 
 %hook SBHIconManager
 
 - (id)iconView:(id)iconView applicationShortcutItemsForMenu:(id)menu withOptions:(id)opts {
     id orig = %orig;
     CraneLog(@"[Hook1] SBHIconManager 被调用");
+
     NSString *bid = nil;
-    @try {
-        id icon = ((id (*)(id, SEL))objc_msgSend)(iconView, sel_registerName("icon"));
-        if (icon) bid = ((id (*)(id, SEL))objc_msgSend)(icon, sel_registerName("applicationBundleID"));
-        if (!bid && icon) bid = ((id (*)(id, SEL))objc_msgSend)(icon, sel_registerName("applicationBundleIdentifier"));
-    } @catch (NSException *e) {}
+    id icon = ((id (*)(id, SEL))objc_msgSend)(iconView, sel_registerName("icon"));
+    if (icon) {
+        bid = GetStr(icon, @"applicationBundleID");
+        if (!bid) bid = GetStr(icon, @"applicationBundleIdentifier");
+    }
 
     NSArray *origItems = nil;
-    if ([orig isKindOfClass:[NSArray class]]) origItems = orig;
-    else if ([orig isKindOfClass:[NSDictionary class]]) origItems = orig[@"items"];
+    if ([orig isKindOfClass:[NSArray class]]) {
+        origItems = orig;
+    } else if ([orig isKindOfClass:[NSDictionary class]]) {
+        origItems = orig[@"items"];
+    }
     if (!origItems) return orig;
 
     NSArray *newItems = BuildItems(bid, origItems);
+
     if ([orig isKindOfClass:[NSArray class]]) return newItems;
     if ([orig isKindOfClass:[NSDictionary class]]) {
         NSMutableDictionary *d = [orig mutableCopy];
@@ -119,15 +132,11 @@ static NSArray *BuildItems(NSString *bid, NSArray *orig) {
 }
 
 - (void)iconView:(id)iconView activateApplicationShortcutItem:(id)item {
-    NSString *type = nil;
-    @try { type = ((id (*)(id, SEL))objc_msgSend)(item, sel_registerName("type")); } @catch (NSException *e) {}
+    NSString *type = GetStr(item, @"type");
     if (type && [type hasPrefix:@"com.crane.switch."]) {
         NSString *cid = [type stringByReplacingOccurrencesOfString:@"com.crane.switch." withString:@""];
-        NSString *bid = nil;
-        @try {
-            id icon = ((id (*)(id, SEL))objc_msgSend)(iconView, sel_registerName("icon"));
-            if (icon) bid = ((id (*)(id, SEL))objc_msgSend)(icon, sel_registerName("applicationBundleID"));
-        } @catch (NSException *e) {}
+        id icon = ((id (*)(id, SEL))objc_msgSend)(iconView, sel_registerName("icon"));
+        NSString *bid = GetStr(icon, @"applicationBundleID");
         CraneLog(@"[Hook1] 点击: %@ -> %@", bid, cid);
         if (bid) {
             CraneSetActiveContainerForBundle(bid, cid);
@@ -140,42 +149,26 @@ static NSArray *BuildItems(NSString *bid, NSArray *orig) {
 
 %end
 
-#pragma mark - Hook 2: SBIconView
+#pragma mark - Hook 2: SBIconView（备用入口）
 
 %hook SBIconView
 
 - (NSArray *)applicationShortcutItems {
     NSArray *orig = %orig;
-    CraneLog(@"[Hook2] SBIconView.applicationShortcutItems 被调用, count=%lu", (unsigned long)orig.count);
+    CraneLog(@"[Hook2] SBIconView.applicationShortcutItems count=%lu", (unsigned long)orig.count);
     return orig;
 }
 
 - (NSArray *)_applicationShortcutItems {
     NSArray *orig = %orig;
-    CraneLog(@"[Hook2b] SBIconView._applicationShortcutItems 被调用");
+    CraneLog(@"[Hook2b] SBIconView._applicationShortcutItems count=%lu", (unsigned long)orig.count);
     return orig;
 }
 
 - (id)_applicationShortcutItemsForMenu:(id)menu withOptions:(id)opts {
     id orig = %orig;
-    CraneLog(@"[Hook2c] SBIconView._applicationShortcutItemsForMenu 被调用");
+    CraneLog(@"[Hook2c] SBIconView._applicationShortcutItemsForMenu");
     return orig;
-}
-
-%end
-
-#pragma mark - Hook 3: SBSApplicationShortcutService
-
-%hook SBSApplicationShortcutService
-
-- (void)fetchApplicationShortcutItemsOfTypes:(unsigned long long)types
-                        forBundleIdentifier:(NSString *)bundleID
-                     withCompletionHandler:(void (^)(NSArray *))handler {
-    CraneLog(@"[Hook3] SBSApplicationShortcutService.fetch 被调用: %@", bundleID);
-    %orig(types, bundleID, ^(NSArray *items) {
-        NSArray *newItems = BuildItems(bundleID, items);
-        if (handler) handler(newItems);
-    });
 }
 
 %end
