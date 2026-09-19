@@ -34,50 +34,60 @@ jobs:
           echo "THEOS=$THEOS" >> $GITHUB_ENV
           echo "$THEOS/bin" >> $GITHUB_PATH
 
-      - name: Build a working ld64.lld
+      - name: Build working ld64.lld + wrapper
         run: |
           export THEOS=${{ github.workspace }}/theos
 
-          echo "=== 寻找真实的 lld 二进制文件（不是符号链接） ==="
+          echo "=== 寻找真实的 lld 二进制 ==="
           REAL_LLD=""
           for c in /usr/bin/lld-18 /usr/bin/lld-17 /usr/bin/lld-16 \
                    /usr/lib/llvm-18/bin/lld /usr/lib/llvm-17/bin/lld /usr/lib/llvm-16/bin/lld; do
             if [ -x "$c" ] && [ ! -L "$c" ]; then
               REAL_LLD="$c"
-              echo "✓ 找到真实二进制: $c"
+              echo "✓ 真实 lld 二进制: $c"
               break
             fi
           done
-
           if [ -z "$REAL_LLD" ]; then
-            echo "=== 没有真实 lld，尝试安装 lld-18 ==="
             sudo apt-get install -y lld-18
             for c in /usr/bin/lld-18 /usr/lib/llvm-18/bin/lld; do
               if [ -x "$c" ] && [ ! -L "$c" ]; then
                 REAL_LLD="$c"
-                echo "✓ 安装后找到: $c"
                 break
               fi
             done
           fi
-
           if [ -z "$REAL_LLD" ]; then
-            echo "=== 致命错误：找不到真实的 lld 二进制文件 ==="
-            echo "所有 lld 相关文件（含符号链接状态）："
+            echo "致命错误：没有真实的 lld 二进制"
             ls -la /usr/bin/*lld* /usr/lib/llvm-*/bin/*lld* 2>/dev/null || true
             exit 1
           fi
 
-          echo "=== 复制并重命名为 ld64.lld（关键：argv[0] 触发 Mach-O 模式） ==="
+          echo "=== 复制成 ld64.lld（★ 关键：文件名决定 Mach-O 模式） ==="
           sudo cp "$REAL_LLD" /usr/local/bin/ld64.lld
           sudo chmod 755 /usr/local/bin/ld64.lld
           LD64=/usr/local/bin/ld64.lld
-          ls -la "$LD64"
-          file "$LD64"
 
-          echo "=== 验证 ld64.lld 能否以 Mach-O 模式运行 ==="
+          echo "=== 验证直接调用 ld64.lld 能走 Mach-O 模式 ==="
           "$LD64" --version
-          echo "test" | "$LD64" -v 2>&1 | head -5 || true
+
+          echo "=== 关键：用 wrapper 脚本替换 /usr/bin/ld ==="
+          echo "  为什么用脚本而不是符号链接？"
+          echo "  符号链接会让 argv[0] 变成 'ld'，lld 会走 ELF 模式"
+          echo "  脚本 exec 后 argv[0] 变成 '/usr/local/bin/ld64.lld'，lld 才走 Mach-O 模式"
+          sudo rm -f /usr/bin/ld
+          sudo tee /usr/bin/ld > /dev/null <<'WRAPPER'
+#!/bin/bash
+exec /usr/local/bin/ld64.lld "$@"
+WRAPPER
+          sudo chmod 755 /usr/bin/ld
+          ls -la /usr/bin/ld
+          cat /usr/bin/ld
+
+          echo "=== 用 -multiply_defined 测试 wrapper 是否是 Mach-O 模式 ==="
+          echo "" | /usr/bin/ld -multiply_defined suppress 2>&1 | head -3 || true
+          echo "  （如果报错信息是 'unknown option' 或 'library not found' 之类，说明已进入 Mach-O 模式；"
+          echo "   如果报错 'unrecognised emulation'，说明还在 ELF 模式）"
 
           # 工具链目录
           TC=$THEOS/toolchain/linux/iphone
@@ -88,13 +98,10 @@ jobs:
           ln -sf $(which clang)   $TC/bin/cc
           ln -sf $(which clang++) $TC/bin/c++
 
-          ln -sf "$LD64" $TC/bin/ld
-          ln -sf "$LD64" $TC/bin/ld64
-
-          echo "=== 覆盖 /usr/bin/ld ==="
-          sudo rm -f /usr/bin/ld
-          sudo ln -sf "$LD64" /usr/bin/ld
-          ls -la /usr/bin/ld
+          # 工具链里的 ld 也放 wrapper，确保 PATH 里有 THEOS/bin 时也走对
+          sudo cp /usr/bin/ld $TC/bin/ld
+          sudo cp /usr/bin/ld $TC/bin/ld64
+          sudo chmod 755 $TC/bin/ld $TC/bin/ld64
 
           for bin in ar ranlib nm strip size objcopy objdump; do
             if command -v llvm-$bin >/dev/null 2>&1; then
@@ -106,10 +113,7 @@ jobs:
 
           echo "=== 工具链内容 ==="
           ls -la $TC/bin/
-
-          echo "=== 验证 ==="
           $TC/bin/clang --version
-          /usr/bin/ld --version || true
 
       - name: Build Tweak
         run: |
