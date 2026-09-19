@@ -1,0 +1,38 @@
+name: Build CraneAdv
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-13
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Theos
+        uses: Randomblock1/theos-action@v1
+        with:
+          theos-dir: 'theos'
+
+      - name: Build Tweak
+        run: |
+          make clean
+          make package
+
+      - name: Find deb
+        run: |
+          find . -name "*.deb" -type f
+
+      - name: Upload deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: CraneAdv-deb
+          path: "**/*.deb"
+          if-no-files-found: error
