@@ -1,9 +1,9 @@
-Package: com.developer.craneadvanced
-Name: Crane Advanced
-Version: 1.0.2
+Package: com.developer.craneicon
+Name: Crane Icon
+Version: 1.0.0
 Architecture: iphoneos-arm64e
-Description: 应用分身/容器管理插件
+Description: Crane 扩展：为每个容器生成独立桌面图标
 Maintainer: Developer
 Author: Developer
 Section: Tweaks
-Depends: mobilesubstrate
+Depends: mobilesubstrate, com.opa334.crane
