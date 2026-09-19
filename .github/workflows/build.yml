@@ -9,24 +9,27 @@ on:
 
 jobs:
   build:
-    # 关键改动：把 macos-13 改成 ubuntu-latest
-    runs-on: ubuntu-latest 
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      # 安装 Ubuntu 上的编译依赖
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y fakeroot make git perl clang
 
-      - name: Setup Theos
-        uses: Randomblock1/theos-action@v1
-        with:
-          theos-dir: 'theos'
+      - name: Clone Theos and SDKs
+        run: |
+          git clone --recursive https://github.com/theos/theos.git ${{ github.workspace }}/theos
+          git clone https://github.com/theos/sdks.git ${{ github.workspace }}/theos/sdks
+
+      - name: Set up Theos environment
+        run: |
+          echo "THEOS=${{ github.workspace }}/theos" >> $GITHUB_ENV
+          echo "${{ github.workspace }}/theos/bin" >> $GITHUB_PATH
 
       - name: Build Tweak
         run: |
