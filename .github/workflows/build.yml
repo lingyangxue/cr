@@ -38,27 +38,40 @@ jobs:
         run: |
           export THEOS=${{ github.workspace }}/theos
 
-          echo "=== 搜索 ld64.lld ==="
-          LD64=$(find /usr -name "ld64.lld" -type f 2>/dev/null | head -1)
+          echo "=== 查找 ld64.lld（只搜可执行文件，排除测试目录） ==="
+          find_ld64() {
+            find /usr/bin /usr/local/bin /usr/lib/llvm-*/bin \
+                 -maxdepth 1 -name "ld64.lld*" -type f -executable 2>/dev/null | head -1
+          }
+
+          LD64=$(find_ld64)
+
           if [ -z "$LD64" ]; then
-            echo "未找到，安装 lld-18..."
+            echo "标准路径未找到，安装 lld-18..."
             sudo apt-get install -y lld-18 || true
-            LD64=$(find /usr -name "ld64.lld" -type f 2>/dev/null | head -1)
+            LD64=$(find_ld64)
           fi
+
           if [ -z "$LD64" ]; then
-            echo "安装 lld 包..."
-            sudo apt-get install -y lld || true
-            LD64=$(find /usr -name "ld64.lld" -type f 2>/dev/null | head -1)
+            echo "退而求其次，全盘搜索可执行文件并排除测试目录..."
+            LD64=$(find /usr -name "ld64.lld*" -type f -executable \
+                   2>/dev/null | grep -v -E "/(tests|Inputs|share|doc)/" | head -1)
           fi
+
           if [ -z "$LD64" ]; then
-            echo "致命错误：无法找到 ld64.lld"
-            echo "已安装的 ld 相关文件："
-            ls /usr/bin/ | grep -i ld
+            echo "=== 致命错误：未找到可执行的 ld64.lld ==="
+            echo "列出所有相关文件（含是否可执行）："
+            find /usr -name "*ld64*" 2>/dev/null | head -20
+            echo "已安装的 lld 相关包："
+            dpkg -l | grep -i lld || true
             exit 1
           fi
-          echo "找到 ld64.lld: $LD64"
-          $LD64 --version
 
+          echo "找到可执行的 ld64.lld: $LD64"
+          ls -la "$LD64"
+          "$LD64" --version
+
+          # 工具链符号链接
           TC=$THEOS/toolchain/linux/iphone
           mkdir -p $TC/bin
 
@@ -67,12 +80,12 @@ jobs:
           ln -sf $(which clang)   $TC/bin/cc
           ln -sf $(which clang++) $TC/bin/c++
 
-          ln -sf $LD64 $TC/bin/ld
-          ln -sf $LD64 $TC/bin/ld64
+          ln -sf "$LD64" $TC/bin/ld
+          ln -sf "$LD64" $TC/bin/ld64
 
           echo "=== 覆盖 /usr/bin/ld ==="
           sudo rm -f /usr/bin/ld
-          sudo ln -sf $LD64 /usr/bin/ld
+          sudo ln -sf "$LD64" /usr/bin/ld
           ls -la /usr/bin/ld
 
           for bin in ar ranlib nm strip size objcopy objdump; do
