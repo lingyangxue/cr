@@ -34,44 +34,52 @@ jobs:
           echo "THEOS=$THEOS" >> $GITHUB_ENV
           echo "$THEOS/bin" >> $GITHUB_PATH
 
-      - name: Install ld64.lld and override system ld
+      - name: Build a working ld64.lld
         run: |
           export THEOS=${{ github.workspace }}/theos
 
-          echo "=== 查找 ld64.lld（只搜可执行文件，排除测试目录） ==="
-          find_ld64() {
-            find /usr/bin /usr/local/bin /usr/lib/llvm-*/bin \
-                 -maxdepth 1 -name "ld64.lld*" -type f -executable 2>/dev/null | head -1
-          }
+          echo "=== 寻找真实的 lld 二进制文件（不是符号链接） ==="
+          REAL_LLD=""
+          for c in /usr/bin/lld-18 /usr/bin/lld-17 /usr/bin/lld-16 \
+                   /usr/lib/llvm-18/bin/lld /usr/lib/llvm-17/bin/lld /usr/lib/llvm-16/bin/lld; do
+            if [ -x "$c" ] && [ ! -L "$c" ]; then
+              REAL_LLD="$c"
+              echo "✓ 找到真实二进制: $c"
+              break
+            fi
+          done
 
-          LD64=$(find_ld64)
-
-          if [ -z "$LD64" ]; then
-            echo "标准路径未找到，安装 lld-18..."
-            sudo apt-get install -y lld-18 || true
-            LD64=$(find_ld64)
+          if [ -z "$REAL_LLD" ]; then
+            echo "=== 没有真实 lld，尝试安装 lld-18 ==="
+            sudo apt-get install -y lld-18
+            for c in /usr/bin/lld-18 /usr/lib/llvm-18/bin/lld; do
+              if [ -x "$c" ] && [ ! -L "$c" ]; then
+                REAL_LLD="$c"
+                echo "✓ 安装后找到: $c"
+                break
+              fi
+            done
           fi
 
-          if [ -z "$LD64" ]; then
-            echo "退而求其次，全盘搜索可执行文件并排除测试目录..."
-            LD64=$(find /usr -name "ld64.lld*" -type f -executable \
-                   2>/dev/null | grep -v -E "/(tests|Inputs|share|doc)/" | head -1)
-          fi
-
-          if [ -z "$LD64" ]; then
-            echo "=== 致命错误：未找到可执行的 ld64.lld ==="
-            echo "列出所有相关文件（含是否可执行）："
-            find /usr -name "*ld64*" 2>/dev/null | head -20
-            echo "已安装的 lld 相关包："
-            dpkg -l | grep -i lld || true
+          if [ -z "$REAL_LLD" ]; then
+            echo "=== 致命错误：找不到真实的 lld 二进制文件 ==="
+            echo "所有 lld 相关文件（含符号链接状态）："
+            ls -la /usr/bin/*lld* /usr/lib/llvm-*/bin/*lld* 2>/dev/null || true
             exit 1
           fi
 
-          echo "找到可执行的 ld64.lld: $LD64"
+          echo "=== 复制并重命名为 ld64.lld（关键：argv[0] 触发 Mach-O 模式） ==="
+          sudo cp "$REAL_LLD" /usr/local/bin/ld64.lld
+          sudo chmod 755 /usr/local/bin/ld64.lld
+          LD64=/usr/local/bin/ld64.lld
           ls -la "$LD64"
-          "$LD64" --version
+          file "$LD64"
 
-          # 工具链符号链接
+          echo "=== 验证 ld64.lld 能否以 Mach-O 模式运行 ==="
+          "$LD64" --version
+          echo "test" | "$LD64" -v 2>&1 | head -5 || true
+
+          # 工具链目录
           TC=$THEOS/toolchain/linux/iphone
           mkdir -p $TC/bin
 
