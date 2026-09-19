@@ -19,24 +19,81 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y fakeroot make git perl clang curl xz-utils dpkg
+          sudo apt-get install -y git make fakeroot perl clang lld libssl-dev curl xz-utils
 
-      - name: Setup Theos, SDKs and Toolchain
+      - name: Setup Theos
         run: |
           export THEOS=${{ github.workspace }}/theos
+          git clone --recursive https://github.com/theos/theos.git $THEOS
+          rm -rf $THEOS/sdks
+          git clone --depth 1 https://github.com/theos/sdks.git $THEOS/sdks
           echo "THEOS=$THEOS" >> $GITHUB_ENV
           echo "$THEOS/bin" >> $GITHUB_PATH
-          
-          # 1. 克隆 Theos 主仓库
-          git clone --recursive https://github.com/theos/theos.git $THEOS
-          
-          # 2. 删除自带的空 sdks 占位，克隆真正的 SDK
-          rm -rf $THEOS/sdks
-          git clone https://github.com/theos/sdks.git $THEOS/sdks
-          
-          # 3. 关键修复：下载并解压 Linux 工具链
+
+      - name: Download Linux Toolchain
+        run: |
+          export THEOS=${{ github.workspace }}/theos
           mkdir -p $THEOS/toolchain/linux
-          curl -L https://github.com/theos/toolchain/releases/download/linux-2023/toolchain.tar.xz | tar -xJ -C $THEOS/toolchain/linux/
+
+          echo "=== 从 GitHub API 获取所有 Linux 工具链下载地址 ==="
+          curl -s https://api.github.com/repos/theos/toolchain/releases \
+            | grep 'browser_download_url' \
+            | grep -i 'linux' \
+            | sed 's/.*"\(https:[^"]*\)".*/\1/' > /tmp/urls.txt
+          cat /tmp/urls.txt
+
+          TOOLCHAIN_URL=$(head -1 /tmp/urls.txt)
+          if [ -z "$TOOLCHAIN_URL" ]; then
+            echo "未找到 Linux 工具链，列出仓库所有 release:"
+            curl -s https://api.github.com/repos/theos/toolchain/releases
+            exit 1
+          fi
+
+          echo "=== 下载: $TOOLCHAIN_URL ==="
+          cd /tmp
+          curl -L "$TOOLCHAIN_URL" -o toolchain.archive
+          file toolchain.archive
+          ls -la toolchain.archive
+
+          echo "=== 解压到 $THEOS/toolchain/linux ==="
+          cd $THEOS/toolchain/linux
+          if file /tmp/toolchain.archive | grep -qi 'XZ'; then
+            tar -xJf /tmp/toolchain.archive
+          elif file /tmp/toolchain.archive | grep -qi 'LZMA'; then
+            tar --lzma -xf /tmp/toolchain.archive
+          elif file /tmp/toolchain.archive | grep -qi 'gzip'; then
+            tar -xzf /tmp/toolchain.archive
+          else
+            tar -xf /tmp/toolchain.archive
+          fi
+
+          echo "=== 解压后结构 ==="
+          ls -la
+          echo "=== 查找 clang ==="
+          find . -name clang -type f 2>/dev/null | head -5
+          find . -maxdepth 3 -type d 2>/dev/null | head -20
+
+      - name: Fix Toolchain Path
+        run: |
+          export THEOS=${{ github.workspace }}/theos
+          # 如果解压出来的不是 iphone/bin/clang 结构，就自动修正
+          if [ ! -f "$THEOS/toolchain/linux/iphone/bin/clang" ]; then
+            CLANG_PATH=$(find $THEOS/toolchain/linux -name clang -type f 2>/dev/null | head -1)
+            if [ -n "$CLANG_PATH" ]; then
+              echo "找到 clang: $CLANG_PATH"
+              BIN_DIR=$(dirname "$CLANG_PATH")
+              # 往上找到 iphone 目录
+              IPHONE_DIR=$(dirname "$BIN_DIR")
+              echo "iPhone 目录: $IPHONE_DIR"
+              if [ "$IPHONE_DIR" != "$THEOS/toolchain/linux/iphone" ]; then
+                mkdir -p $THEOS/toolchain/linux/iphone
+                cp -R "$IPHONE_DIR"/* $THEOS/toolchain/linux/iphone/ || true
+              fi
+            else
+              echo "警告：未找到 clang，跳过路径修正"
+            fi
+          fi
+          ls -la $THEOS/toolchain/linux/ 2>/dev/null || true
 
       - name: Build Tweak
         run: |
