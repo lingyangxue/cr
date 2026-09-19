@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: macos-14
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -18,102 +18,26 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            git make fakeroot perl \
-            clang lld llvm \
-            libssl-dev curl xz-utils dpkg \
-            libplist-utils libxml2-utils
+          brew install ldid xz make || true
 
-      - name: Setup Theos
+      - name: Setup Theos and SDKs
         run: |
-          export THEOS=${{ github.workspace }}/theos
-          git clone --recursive https://github.com/theos/theos.git $THEOS
-          rm -rf $THEOS/sdks
-          git clone --depth 1 https://github.com/theos/sdks.git $THEOS/sdks
-          echo "THEOS=$THEOS" >> $GITHUB_ENV
-          echo "$THEOS/bin" >> $GITHUB_PATH
+          git clone --recursive https://github.com/theos/theos.git $HOME/theos
+          rm -rf $HOME/theos/sdks
+          git clone --depth 1 https://github.com/theos/sdks.git $HOME/theos/sdks
+          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+          echo "$HOME/theos/bin" >> $GITHUB_PATH
 
-      - name: Build working ld64.lld + wrapper
+      - name: Verify environment
         run: |
-          export THEOS=${{ github.workspace }}/theos
-
-          echo "=== 寻找真实的 lld 二进制 ==="
-          REAL_LLD=""
-          for c in /usr/bin/lld-18 /usr/bin/lld-17 /usr/bin/lld-16 \
-                   /usr/lib/llvm-18/bin/lld /usr/lib/llvm-17/bin/lld /usr/lib/llvm-16/bin/lld; do
-            if [ -x "$c" ] && [ ! -L "$c" ]; then
-              REAL_LLD="$c"
-              echo "✓ 真实 lld 二进制: $c"
-              break
-            fi
-          done
-          if [ -z "$REAL_LLD" ]; then
-            sudo apt-get install -y lld-18
-            for c in /usr/bin/lld-18 /usr/lib/llvm-18/bin/lld; do
-              if [ -x "$c" ] && [ ! -L "$c" ]; then
-                REAL_LLD="$c"
-                break
-              fi
-            done
-          fi
-          if [ -z "$REAL_LLD" ]; then
-            echo "致命错误：没有真实的 lld 二进制"
-            ls -la /usr/bin/*lld* /usr/lib/llvm-*/bin/*lld* 2>/dev/null || true
-            exit 1
-          fi
-
-          echo "=== 复制成 ld64.lld（★ 关键：文件名决定 Mach-O 模式） ==="
-          sudo cp "$REAL_LLD" /usr/local/bin/ld64.lld
-          sudo chmod 755 /usr/local/bin/ld64.lld
-          LD64=/usr/local/bin/ld64.lld
-
-          echo "=== 验证直接调用 ld64.lld 能走 Mach-O 模式 ==="
-          "$LD64" --version
-
-          echo "=== 关键：用 wrapper 脚本替换 /usr/bin/ld ==="
-          echo "  为什么用脚本而不是符号链接？"
-          echo "  符号链接会让 argv[0] 变成 'ld'，lld 会走 ELF 模式"
-          echo "  脚本 exec 后 argv[0] 变成 '/usr/local/bin/ld64.lld'，lld 才走 Mach-O 模式"
-          sudo rm -f /usr/bin/ld
-          sudo tee /usr/bin/ld > /dev/null <<'WRAPPER'
-#!/bin/bash
-exec /usr/local/bin/ld64.lld "$@"
-WRAPPER
-          sudo chmod 755 /usr/bin/ld
-          ls -la /usr/bin/ld
-          cat /usr/bin/ld
-
-          echo "=== 用 -multiply_defined 测试 wrapper 是否是 Mach-O 模式 ==="
-          echo "" | /usr/bin/ld -multiply_defined suppress 2>&1 | head -3 || true
-          echo "  （如果报错信息是 'unknown option' 或 'library not found' 之类，说明已进入 Mach-O 模式；"
-          echo "   如果报错 'unrecognised emulation'，说明还在 ELF 模式）"
-
-          # 工具链目录
-          TC=$THEOS/toolchain/linux/iphone
-          mkdir -p $TC/bin
-
-          ln -sf $(which clang)   $TC/bin/clang
-          ln -sf $(which clang++) $TC/bin/clang++
-          ln -sf $(which clang)   $TC/bin/cc
-          ln -sf $(which clang++) $TC/bin/c++
-
-          # 工具链里的 ld 也放 wrapper，确保 PATH 里有 THEOS/bin 时也走对
-          sudo cp /usr/bin/ld $TC/bin/ld
-          sudo cp /usr/bin/ld $TC/bin/ld64
-          sudo chmod 755 $TC/bin/ld $TC/bin/ld64
-
-          for bin in ar ranlib nm strip size objcopy objdump; do
-            if command -v llvm-$bin >/dev/null 2>&1; then
-              ln -sf $(which llvm-$bin) $TC/bin/$bin
-            elif command -v $bin >/dev/null 2>&1; then
-              ln -sf $(which $bin) $TC/bin/$bin
-            fi
-          done
-
-          echo "=== 工具链内容 ==="
-          ls -la $TC/bin/
-          $TC/bin/clang --version
+          echo "=== clang 版本 ==="
+          clang --version
+          echo "=== ld 版本（应该是 Apple 的 ld） ==="
+          ld -v 2>&1 || ld --version 2>&1 || true
+          echo "=== Theos 目录 ==="
+          ls -la $HOME/theos/
+          echo "=== SDK 列表 ==="
+          ls -la $HOME/theos/sdks/ | head -20
 
       - name: Build Tweak
         run: |
