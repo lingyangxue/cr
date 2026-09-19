@@ -1,8 +1,13 @@
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+
 #import "Common.h"
 #import <UIKit/UIKit.h>
 #import <notify.h>
 #import <dlfcn.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
+#import <unistd.h>
 
 #pragma mark - 私有类声明
 
@@ -174,7 +179,121 @@ static void HandleClipCreationRequest(void) {
     }
 }
 
-#pragma mark - Hook SBUIController
+#pragma mark - 快捷菜单项构造
+
+static NSArray *CraneBuildShortcutItemsForBundle(NSString *bundleID, NSArray *origItems) {
+    if (!CraneIsEnabled() || !bundleID) return origItems;
+    if ([bundleID hasPrefix:@"com.apple."]) return origItems;
+
+    NSMutableArray *items = [origItems mutableCopy] ?: [NSMutableArray array];
+    NSString *activeContainer = CraneActiveContainerForBundle(bundleID);
+    NSArray *containers = CraneGetContainersForBundle(bundleID);
+
+    Class itemCls = objc_getClass("SBSApplicationShortcutItem");
+    if (!itemCls) itemCls = objc_getClass("UIApplicationShortcutItem");
+    if (!itemCls) {
+        NSLog(@"[CraneAdv] 找不到 shortcut item 类");
+        return items;
+    }
+
+    for (NSString *cID in containers) {
+        id item = ((id (*)(id, SEL))objc_msgSend)(
+            ((id (*)(id, SEL))objc_msgSend)(itemCls, sel_registerName("alloc")),
+            sel_registerName("init"));
+
+        NSString *typeStr = [NSString stringWithFormat:@"com.crane.switch.%@", cID];
+        NSString *titleStr = [NSString stringWithFormat:@"切换至: %@", cID];
+        NSString *subStr = [cID isEqualToString:activeContainer] ? @"[当前激活]" : @"点击切换激活容器";
+
+        ((void (*)(id, SEL, id))objc_msgSend)(item, sel_registerName("setType:"), typeStr);
+        ((void (*)(id, SEL, id))objc_msgSend)(item, sel_registerName("setLocalizedTitle:"), titleStr);
+        ((void (*)(id, SEL, id))objc_msgSend)(item, sel_registerName("setLocalizedSubtitle:"), subStr);
+        [items addObject:item];
+    }
+
+    NSLog(@"[CraneAdv] 为 %@ 加入 %lu 个容器菜单", bundleID, (unsigned long)containers.count);
+    return items;
+}
+
+#pragma mark - iOS 17 快捷菜单（主入口）
+
+%hook SBHIconManager
+
+- (id)iconView:(id)iconView applicationShortcutItemsForMenu:(id)menu withOptions:(id)opts {
+    id orig = %orig;
+    NSString *bundleID = nil;
+    @try {
+        id icon = ((id (*)(id, SEL))objc_msgSend)(iconView, sel_registerName("icon"));
+        if (icon) {
+            bundleID = ((id (*)(id, SEL))objc_msgSend)(icon, sel_registerName("applicationBundleID"));
+            if (!bundleID) {
+                bundleID = ((id (*)(id, SEL))objc_msgSend)(icon, sel_registerName("applicationBundleIdentifier"));
+            }
+        }
+    } @catch (NSException *e) {
+        NSLog(@"[CraneAdv] 取 bundleID 异常: %@", e);
+    }
+
+    NSArray *origItems = nil;
+    if ([orig isKindOfClass:[NSArray class]]) origItems = orig;
+    else if ([orig isKindOfClass:[NSDictionary class]]) {
+        origItems = orig[@"items"];
+    }
+
+    if (!origItems) return orig;
+    NSArray *newItems = CraneBuildShortcutItemsForBundle(bundleID, origItems);
+
+    if ([orig isKindOfClass:[NSArray class]]) return newItems;
+    if ([orig isKindOfClass:[NSDictionary class]]) {
+        NSMutableDictionary *d = [orig mutableCopy];
+        d[@"items"] = newItems;
+        return d;
+    }
+    return orig;
+}
+
+- (void)iconView:(id)iconView activateApplicationShortcutItem:(id)item {
+    NSString *type = nil;
+    @try {
+        type = ((id (*)(id, SEL))objc_msgSend)(item, sel_registerName("type"));
+    } @catch (NSException *e) {}
+
+    if (type && [type hasPrefix:@"com.crane.switch."]) {
+        NSString *cID = [type stringByReplacingOccurrencesOfString:@"com.crane.switch." withString:@""];
+        NSString *bundleID = nil;
+        @try {
+            id icon = ((id (*)(id, SEL))objc_msgSend)(iconView, sel_registerName("icon"));
+            if (icon) {
+                bundleID = ((id (*)(id, SEL))objc_msgSend)(icon, sel_registerName("applicationBundleID"));
+            }
+        } @catch (NSException *e) {}
+
+        NSLog(@"[CraneAdv] 点击容器菜单: %@ -> %@", bundleID, cID);
+        if (bundleID) {
+            CraneSetActiveContainerForBundle(bundleID, cID);
+            KillProcessForBundle(bundleID);
+        }
+        return;
+    }
+    %orig;
+}
+
+%end
+
+#pragma mark - iOS 13-16 老路径（保留兜底）
+
+%hook SBApplicationShortcutStore
+
+- (NSArray *)shortcutItems {
+    NSArray *orig = %orig;
+    NSString *bundleID = [self bundleIdentifier];
+    NSLog(@"[CraneAdv] 老路径 shortcutItems 被调用: %@", bundleID);
+    return CraneBuildShortcutItemsForBundle(bundleID, orig);
+}
+
+%end
+
+#pragma mark - SBUIController（启动时询问容器）
 
 %hook SBUIController
 
@@ -230,7 +349,7 @@ static void HandleClipCreationRequest(void) {
 
 %end
 
-#pragma mark - Hook URL scheme 处理
+#pragma mark - URL scheme（桌面分身图标点击）
 
 %hook SpringBoard
 
@@ -265,6 +384,8 @@ static void HandleClipCreationRequest(void) {
 %ctor {
     @autoreleasepool {
         %init;
+        NSLog(@"[CraneAdv] Tweak loaded in pid=%d", getpid());
+
         dispatch_async(dispatch_get_global_queue(0, 0), ^{
             NSString *baseDir = @"/var/mobile/Library/WebClips";
             NSFileManager *fm = [NSFileManager defaultManager];
@@ -279,9 +400,12 @@ static void HandleClipCreationRequest(void) {
                 }
             }
         });
+
         int token;
         notify_register_dispatch(NOTIFY_CREATE_CLIP, &token, dispatch_get_main_queue(), ^(int t) {
             HandleClipCreationRequest();
         });
     }
 }
+
+#pragma clang diagnostic pop
