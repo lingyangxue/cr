@@ -19,18 +19,24 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y fakeroot make git perl clang
+          sudo apt-get install -y fakeroot make git perl clang curl xz-utils dpkg
 
-      - name: Clone Theos and SDKs
+      - name: Setup Theos, SDKs and Toolchain
         run: |
-          git clone --recursive https://github.com/theos/theos.git ${{ github.workspace }}/theos
-          rm -rf ${{ github.workspace }}/theos/sdks
-          git clone https://github.com/theos/sdks.git ${{ github.workspace }}/theos/sdks
-
-      - name: Set up Theos environment
-        run: |
-          echo "THEOS=${{ github.workspace }}/theos" >> $GITHUB_ENV
-          echo "${{ github.workspace }}/theos/bin" >> $GITHUB_PATH
+          export THEOS=${{ github.workspace }}/theos
+          echo "THEOS=$THEOS" >> $GITHUB_ENV
+          echo "$THEOS/bin" >> $GITHUB_PATH
+          
+          # 1. 克隆 Theos 主仓库
+          git clone --recursive https://github.com/theos/theos.git $THEOS
+          
+          # 2. 删除自带的空 sdks 占位，克隆真正的 SDK
+          rm -rf $THEOS/sdks
+          git clone https://github.com/theos/sdks.git $THEOS/sdks
+          
+          # 3. 关键修复：下载并解压 Linux 工具链
+          mkdir -p $THEOS/toolchain/linux
+          curl -L https://github.com/theos/toolchain/releases/download/linux-2023/toolchain.tar.xz | tar -xJ -C $THEOS/toolchain/linux/
 
       - name: Build Tweak
         run: |
