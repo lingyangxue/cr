@@ -6,7 +6,7 @@ INSTALL_TARGET_PROCESSES = SpringBoard
 include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = CraneAdv
-CraneAdv_FILES = Tweak.xm TweakApp.xm
+CraneAdv_FILES = $(wildcard Tweak.x Tweak.xm) $(wildcard TweakApp.x TweakApp.xm)
 CraneAdv_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -Wno-unused-variable
 CraneAdv_FRAMEWORKS = UIKit Foundation
 CraneAdv_LIBRARIES = substrate
