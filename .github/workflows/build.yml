@@ -7,6 +7,10 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+# 关键：显式声明读权限，让 GITHUB_TOKEN 能用于 API 请求
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -19,7 +23,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git make fakeroot perl clang lld libssl-dev curl xz-utils
+          sudo apt-get install -y git make fakeroot perl clang lld libssl-dev curl xz-utils jq
 
       - name: Setup Theos
         run: |
@@ -31,27 +35,44 @@ jobs:
           echo "$THEOS/bin" >> $GITHUB_PATH
 
       - name: Download Linux Toolchain
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           export THEOS=${{ github.workspace }}/theos
           mkdir -p $THEOS/toolchain/linux
 
-          echo "=== 从 GitHub API 获取所有 Linux 工具链下载地址 ==="
-          curl -s https://api.github.com/repos/theos/toolchain/releases \
-            | grep 'browser_download_url' \
-            | grep -i 'linux' \
-            | sed 's/.*"\(https:[^"]*\)".*/\1/' > /tmp/urls.txt
-          cat /tmp/urls.txt
+          echo "=== 使用认证 API 查询 Linux 工具链 ==="
+          # 带 token 的请求，速率限制从 60/小时 提升到 5000/小时
+          curl -s -H "Authorization: Bearer $GH_TOKEN" \
+               -H "Accept: application/vnd.github+json" \
+               "https://api.github.com/repos/theos/toolchain/releases?per_page=100" \
+               -o /tmp/releases.json
 
-          TOOLCHAIN_URL=$(head -1 /tmp/urls.txt)
+          # 检查 API 返回内容
+          if ! jq -e 'type == "array"' /tmp/releases.json > /dev/null 2>&1; then
+            echo "=== API 返回异常，原始内容如下 ==="
+            cat /tmp/releases.json
+            exit 1
+          fi
+
+          echo "=== 查找 Linux 工具链 asset ==="
+          TOOLCHAIN_URL=$(jq -r '
+            [.[] | .assets[]?
+              | select(.name | test("linux"; "i"))
+              | select(.name | test("\\.(tar\\.xz|tar\\.gz|txz)$"; "i"))
+              | .browser_download_url
+            ] | first // empty
+          ' /tmp/releases.json)
+
           if [ -z "$TOOLCHAIN_URL" ]; then
-            echo "未找到 Linux 工具链，列出仓库所有 release:"
-            curl -s https://api.github.com/repos/theos/toolchain/releases
+            echo "未找到 Linux 工具链 asset，列出所有 release 与 asset："
+            jq -r '.[] | "Release: \(.tag_name)  Assets: \([.assets[].name] | join(", "))"' /tmp/releases.json
             exit 1
           fi
 
           echo "=== 下载: $TOOLCHAIN_URL ==="
           cd /tmp
-          curl -L "$TOOLCHAIN_URL" -o toolchain.archive
+          curl -L -H "Authorization: Bearer $GH_TOKEN" "$TOOLCHAIN_URL" -o toolchain.archive
           file toolchain.archive
           ls -la toolchain.archive
 
@@ -67,33 +88,35 @@ jobs:
             tar -xf /tmp/toolchain.archive
           fi
 
-          echo "=== 解压后结构 ==="
-          ls -la
+          echo "=== 解压后目录结构 ==="
+          find . -maxdepth 3 -type d | head -30
           echo "=== 查找 clang ==="
           find . -name clang -type f 2>/dev/null | head -5
-          find . -maxdepth 3 -type d 2>/dev/null | head -20
 
       - name: Fix Toolchain Path
         run: |
           export THEOS=${{ github.workspace }}/theos
-          # 如果解压出来的不是 iphone/bin/clang 结构，就自动修正
           if [ ! -f "$THEOS/toolchain/linux/iphone/bin/clang" ]; then
+            echo "=== 期望路径不存在，开始自动修正 ==="
             CLANG_PATH=$(find $THEOS/toolchain/linux -name clang -type f 2>/dev/null | head -1)
             if [ -n "$CLANG_PATH" ]; then
               echo "找到 clang: $CLANG_PATH"
               BIN_DIR=$(dirname "$CLANG_PATH")
-              # 往上找到 iphone 目录
               IPHONE_DIR=$(dirname "$BIN_DIR")
-              echo "iPhone 目录: $IPHONE_DIR"
+              echo "实际 iPhone 目录: $IPHONE_DIR"
               if [ "$IPHONE_DIR" != "$THEOS/toolchain/linux/iphone" ]; then
                 mkdir -p $THEOS/toolchain/linux/iphone
                 cp -R "$IPHONE_DIR"/* $THEOS/toolchain/linux/iphone/ || true
               fi
+              ls -la $THEOS/toolchain/linux/iphone/bin/ | head -10
             else
-              echo "警告：未找到 clang，跳过路径修正"
+              echo "警告：完全未找到 clang，工具链可能不是标准结构"
+              find $THEOS/toolchain/linux -maxdepth 4 -type f | head -30
             fi
+          else
+            echo "工具链路径正确"
+            ls -la $THEOS/toolchain/linux/iphone/bin/ | head -5
           fi
-          ls -la $THEOS/toolchain/linux/ 2>/dev/null || true
 
       - name: Build Tweak
         run: |
