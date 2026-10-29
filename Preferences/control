@@ -1,0 +1,9 @@
+Package: com.yourname.guestmodeprefs
+Name: GuestModePrefs
+Version: 1.0.0
+Architecture: iphoneos-arm64
+Description: GuestMode Settings Bundle
+Maintainer: yourname
+Author: yourname
+Section: Tweaks
+Depends: mobilesubstrate, firmware (>= 17.0)
