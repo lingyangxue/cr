@@ -9,5 +9,6 @@ GuestModePrefs_FILES = GuestModeRootListController.m
 GuestModePrefs_FRAMEWORKS = UIKit Foundation
 GuestModePrefs_INSTALL_PATH = /Library/PreferenceBundles
 GuestModePrefs_CFLAGS = -fobjc-arc
+GuestModePrefs_LDFLAGS = -undefined dynamic_lookup
 
 include $(THEOS_MAKE_PATH)/bundle.mk
