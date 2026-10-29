@@ -1,0 +1,7 @@
+{
+    entry = {
+        bundle = "com.yourname.guestmodeprefs";
+        cell = PSLinkCell;
+        label = "GuestMode";
+    };
+}
