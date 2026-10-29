@@ -7,7 +7,6 @@ include $(THEOS)/makefiles/common.mk
 BUNDLE_NAME = GuestModePrefs
 GuestModePrefs_FILES = GuestModeRootListController.m
 GuestModePrefs_FRAMEWORKS = UIKit Foundation
-GuestModePrefs_PRIVATE_FRAMEWORKS = Preferences
 GuestModePrefs_INSTALL_PATH = /Library/PreferenceBundles
 GuestModePrefs_CFLAGS = -fobjc-arc
 
