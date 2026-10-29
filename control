@@ -1,9 +1,9 @@
-Package: com.developer.craneicon
-Name: Crane Icon
+Package: com.yourname.guestmode
+Name: GuestMode
 Version: 1.0.0
-Architecture: iphoneos-arm64e
-Description: Crane 扩展：为每个容器生成独立桌面图标
-Maintainer: Developer
-Author: Developer
+Architecture: iphoneos-arm64
+Description: 访客模式插件（iOS 17 rootless）
+Maintainer: yourname
+Author: yourname
 Section: Tweaks
-Depends: mobilesubstrate, com.opa334.crane
+Depends: mobilesubstrate, firmware (>= 17.0)
