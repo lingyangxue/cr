@@ -7,7 +7,6 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = GuestMode
 GuestMode_FILES = Tweak.xm GuestModeState.m
 GuestMode_FRAMEWORKS = Foundation UIKit
-GuestMode_PRIVATE_FRAMEWORKS = SpringBoardServices
 GuestMode_CFLAGS = -fobjc-arc
 
 include $(THEOS_MAKE_PATH)/tweak.mk
