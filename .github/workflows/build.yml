@@ -1,55 +1,23 @@
-name: Build CraneAdv
-
-on:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
-  workflow_dispatch:
-
+name: Build GuestMode
+on: [push, workflow_dispatch]
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Install dependencies
+      - uses: actions/checkout@v4
+      - name: Install Theos
         run: |
-          brew install ldid xz make || true
-
-      - name: Setup roothide Theos and SDKs
-        run: |
-          git clone --recursive https://github.com/roothide/theos.git $HOME/theos
-          rm -rf $HOME/theos/sdks
-          git clone --depth 1 https://github.com/theos/sdks.git $HOME/theos/sdks
-          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
-          echo "$HOME/theos/bin" >> $GITHUB_PATH
-
-      - name: Verify environment
-        run: |
-          echo "=== Theos 版本检查 ==="
-          ls -la $HOME/theos/makefiles/
-          echo "=== 检查 roothide scheme 是否存在 ==="
-          ls -la $HOME/theos/makefiles/package/ 2>/dev/null || true
-          grep -r "roothide" $HOME/theos/makefiles/common.mk 2>/dev/null | head -5 || echo "未在 common.mk 中找到 roothide 字样"
-          echo "=== clang 版本 ==="
-          clang --version
-
+          brew install ldid xz make
+          git clone --recursive https://github.com/theos/theos.git ~/theos
+          echo "THEOS=~/theos" >> $GITHUB_ENV
       - name: Build Tweak
         run: |
-          make clean
-          make package
-
-      - name: Find deb
+          make package THEOS_PACKAGE_SCHEME=rootless FINALPACKAGE=1
+      - name: Build Prefs
         run: |
-          find . -name "*.deb" -type f
-
-      - name: Upload deb
-        uses: actions/upload-artifact@v4
+          make package THEOS_PACKAGE_SCHEME=rootless FINALPACKAGE=1
+        working-directory: Preferences
+      - uses: actions/upload-artifact@v4
         with:
-          name: CraneAdv-deb
+          name: GuestMode-debs
           path: "**/*.deb"
-          if-no-files-found: error
